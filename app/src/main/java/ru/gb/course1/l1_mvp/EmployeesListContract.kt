@@ -2,6 +2,8 @@ package ru.gb.course1.l1_mvp
 
 import android.content.Context
 import android.widget.Toast
+import androidx.lifecycle.LiveData
+import androidx.lifecycle.MutableLiveData
 
 // это должно лежать где-то в domain/entity пакете
 data class EmployeeEntity(
@@ -10,100 +12,80 @@ data class EmployeeEntity(
 )
 
 /**
- *      1) Возможная утечка view (activity, fragment, context)
- *      2) Восстановление состояния view при detach/attach
+ *      x`   1) Возможная утечка view (activity, fragment, context)
+ *      x    2) Восстановление состояния view при detach/attach
  *      3) Одноразовые события
  */
-interface EmployeesListContract {
-    interface View {
-        fun showProgress(progressEnabled: Boolean)
-        fun setEmployees(employees: List<EmployeeEntity>)
-        fun showError(throwable: Throwable)
-    }
 
-    interface Presenter {
-        fun onLoadList()
-
-        fun attach(view: View)
-        fun detach()
+data class OneTimeError(
+    private val error: Throwable
+) {
+    private var wasUsed = false
+    fun getValue(): Throwable? = if (wasUsed) {
+        null
+    } else {
+        wasUsed = true
+        error
     }
 }
 
-class Presenter : EmployeesListContract.Presenter {
-    private var view: EmployeesListContract.View? = null
+interface EmployeesListContract {
 
-    private var data: List<EmployeeEntity>? = null
-        set(value) {
-            field = value
-            value?.let { view?.setEmployees(it) }
-        }
+    interface ViewModel {
+        val progress: LiveData<Boolean>
+        val employeesList: LiveData<List<EmployeeEntity>?>
+        val error: LiveData<Throwable>
 
-    private var error: Throwable? = null
-        set(value) {
-            value?.let {
-                if (view != null) {
-                    view?.showError(it)
-                    field = null
-                } else {
-                    field = value
-                }
-            }
-        }
+        fun onLoadList()
+    }
+}
 
-    private var isLoading: Boolean = false
-        set(value) {
-            field = value
-            view?.showProgress(value)
-        }
+class ViewModel : EmployeesListContract.ViewModel {
+    private fun <T> LiveData<T>.mutable(): MutableLiveData<T> {
+        return this as MutableLiveData<T>
+    }
+
+    override val progress: LiveData<Boolean> = MutableLiveData<Boolean>()
+
+    private val _employeesList = MutableLiveData<List<EmployeeEntity>?>()
+    override val employeesList = _employeesList as LiveData<List<EmployeeEntity>?>
+
+    private val _error = MutableLiveData<Throwable>()
+    override val error = _error as LiveData<Throwable>
 
     override fun onLoadList() {
-        isLoading = true
+        progress.mutable().postValue(true)
+
         api.loadUsers( // 30 sec
             onError = { error: Throwable ->
-                isLoading = false
-                this.error = error
+                _progress.postValue(false)
+                _error.postValue(error)
             },
             onSuccess = { data: List<EmployeeEntity> ->
-                isLoading = false
-                this.data = data
+                _progress.postValue(false)
+                _employeesList.postValue(data)
             }
         )
     }
 
-    override fun attach(view: EmployeesListContract.View) {
-        this.view = view
-
-        view.showProgress(isLoading)
-        data?.let { view.setEmployees(it) }
-        error?.let { view.showError(it) }
-    }
-
-    override fun detach() {
-        view = null
-    }
-
 }
 
 
-class EmployeesView : EmployeesListContract.View {
+class EmployeesView {
     private lateinit var context: Context
-    private lateinit var presenter: EmployeesListContract.Presenter
+    private lateinit var viewModel: EmployeesListContract.ViewModel
 
     fun onCreate() {
         // ...
-        presenter.attach(this)
-    }
 
-    override fun showProgress(progressEnabled: Boolean) {
-        TODO("Not yet implemented")
-    }
+        viewModel.progress.observe(this) {
+            binding.progressBar.isVisible = it
+        }
 
-    override fun setEmployees(employees: List<EmployeeEntity>) {
-        TODO("Not yet implemented")
-    }
+        viewModel.error.observe(this) {
+            Toast.makeText(context, it.message, Toast.LENGTH_SHORT).show()
+        }
 
-    override fun showError(throwable: Throwable) {
-        Toast.makeText(context, throwable.message, Toast.LENGTH_SHORT).show()
     }
 
 }
